@@ -26,54 +26,84 @@ def CreateLevel(size:tuple=(10, 10), mine_count:int=10):
         "progress": {
             "clicks": list(),
             "flags": set(),
+            "numbers": set(),
         }
     }
     return level
 
-def RenderScreen(level, position):
-    global game_surface, failed
-    surface = pygame.Surface((WIDTH, HEIGHT))
-    for x in range(tile_columns):
-        if x >= level["width"]: break
-        for y in range(tile_rows):
-            if y >= level["height"]: break
-            tile_position = (x*zoom-position[0], y*zoom-position[1])
-            surface.blit(scaled_texture["cellup"], tile_position)
-    for x, y in level["progress"]["clicks"]:
-        tile_position = (x*zoom-position[0], y*zoom-position[1])
+def FloodFill(tile, level, position, surface, discovered=None):
+    if discovered is None:
+        discovered = set()
+
+    stack = [tile]
+    
+    while stack:
+        x, y = stack.pop()
+        if (x, y) in discovered:
+            continue
+        discovered.add((x, y))
+        level["progress"]["clicks"].append((x, y))
+        
+
         surrounding_tiles = [
             (x-1, y-1),(x, y-1),(x+1, y-1),
             (x-1, y),             (x+1, y),
             (x-1, y+1),(x, y+1),(x+1, y+1),
         ]
-        bomb_count = 0
-        for tile in surrounding_tiles:
-            if tile in level["mines"]:
-                bomb_count += 1
-        if (x, y) in level["mines"]: # Clicked mine
-            failed = True
-        elif bomb_count > 0: # If surrounding bombs
+
+        bomb_count = sum(1 for t in surrounding_tiles if t in level["mines"])
+
+        tile_position = (x*zoom-position[0], y*zoom-position[1])
+        if bomb_count > 0:
             surface.blit(scaled_texture[f"cell{bomb_count}"], tile_position)
+            level["progress"]["numbers"].add((x, y, bomb_count))
         else:
             surface.blit(scaled_texture["celldown"], tile_position)
-    for x, y in level["progress"]["flags"]:
-        tile_position = (x*zoom-position[0], y*zoom-position[1])
-        surface.blit(scaled_texture["cellflag"], tile_position)
-    
-    if failed: # Game end
-        for x, y in level["mines"]:
-            tile_position = (x*zoom-position[0], y*zoom-position[1])
-            if (x, y) in level["progress"]["clicks"]:
-                surface.blit(scaled_texture["blast"], tile_position) # Clicked mine
-            else:
-                surface.blit(scaled_texture["cellmine"], tile_position) # Normal mine
+        if bomb_count == 0:
+            for t in surrounding_tiles:
+                if t not in discovered and t not in level["mines"] and 0 <= t[0] < level["width"] and 0 <= t[1] < level["height"]:
+                    stack.append(t)
+    return surface
+
+def RenderScreen(level, position):
+    global game_surface, failed, surface
+    surface = pygame.Surface((WIDTH, HEIGHT))
+
+    for x in range(tile_columns):
+        if x >= level["width"]: break
+        for y in range(tile_rows):
+            if y >= level["height"]: break
+            t = (x, y)
+            if t not in level["progress"]["numbers"]:
+                tile_position = (x*zoom-position[0], y*zoom-position[1])
+                surface.blit(scaled_texture["cellup"], tile_position)
+
+            if t in level["progress"]["clicks"]:
+                if t in level["mines"]: # Clicked mine
+                    failed = True
+                else:
+                    surface.blit(scaled_texture["celldown"], tile_position)
+
+            if t in level["progress"]["flags"]:
+                surface.blit(scaled_texture["cellflag"], tile_position)
+
+            for count in range(9):
+                if (x, y, count) in level["progress"]["numbers"]:
+                    surface.blit(scaled_texture[f"cell{count}"], tile_position)
+            
+            if failed: # Game end
+                if t in level["mines"]:
+                    if t in level["progress"]["clicks"]:
+                        surface.blit(scaled_texture["blast"], tile_position) # Clicked mine
+                    else:
+                        surface.blit(scaled_texture["cellmine"], tile_position) # Normal mine
 
     game_surface = surface
     return surface
 
 
 # Game variables
-Level1 = CreateLevel((10, 10))
+Level1 = CreateLevel((100, 100), 1000)
 print(Level1)
 
 zoom = 47
@@ -127,6 +157,8 @@ game_surface = RenderScreen(Level1, (posx, posy))
 
 running = True
 while running:
+    oldposx = posx
+    oldposy = posy
     # Selected Tile
     mousepos = pygame.mouse.get_pos()
     mouse_pressed = pygame.mouse.get_pressed()
@@ -156,7 +188,7 @@ while running:
                 if 0 <= selected_tile[0] < Level1["width"] and 0 <= selected_tile[1] < Level1["height"]: # If selected_tile is inside level
                     if selected_tile not in Level1["progress"]["clicks"] and selected_tile not in Level1["progress"]["flags"]:
                         if not failed: Level1["progress"]["clicks"].append(selected_tile)
-                        print("pressed")
+                        game_surface = FloodFill(selected_tile, Level1, (posx, posy), surface)
             elif event.dict["button"] == 3:
                 if 0 <= selected_tile[0] < Level1["width"] and 0 <= selected_tile[1] < Level1["height"]: # If selected_tile is inside level
                     if selected_tile not in Level1["progress"]["clicks"] and selected_tile not in Level1["progress"]["flags"]:
@@ -174,7 +206,7 @@ while running:
             zoom = max(min(zoom, 160), 3) # sets min and max zoom
             RefreshScaledTexture()
 
-            print(f"Distance zoomed: {tile_columns}")
+            difference = zoom-previous_zoom
             
             RenderScreen(Level1, (posx, posy))
 
@@ -185,6 +217,20 @@ while running:
         #         posx -= dirx
         #         posy -= diry
         #         RenderScreen(Level1, (posx, posy))
+    
+    keys = pygame.key.get_pressed()
+    move_speed = 5
+    if keys[pygame.K_w]:
+        posy -= move_speed
+    if keys[pygame.K_s]:
+        posy += move_speed
+    if keys[pygame.K_a]:
+        posx -= move_speed
+    if keys[pygame.K_d]:
+        posx += move_speed
+
+    if oldposx != posx or oldposy != posy:
+        RenderScreen(Level1, (posx, posy))
 
     win.blit(game_surface, (0,0))
 
